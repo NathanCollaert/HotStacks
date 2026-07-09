@@ -5,9 +5,7 @@ A RuneLite plugin that visualizes the value of items in your bank with a heat-ma
 ## How It Works
 
 ### Value Calculation
-Each stack's value = item unit price (from RuneLite's wiki price database) × quantity.
-
-Untradeable items (quest items, etc.) show no value. Charged/degraded variants show the value of their tradeable base.
+Each stack's value = item unit price × quantity
 
 ### Ranking
 Items are ranked from cheapest to dearest in the current view:

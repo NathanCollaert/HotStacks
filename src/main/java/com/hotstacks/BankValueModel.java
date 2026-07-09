@@ -1,17 +1,14 @@
 package com.hotstacks;
 
 import java.util.Arrays;
-import java.util.Collection;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.Client;
-import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.widgets.ComponentID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
-import net.runelite.client.game.ItemVariationMapping;
 
 /**
  * Works out what value (if any) a bank slot should display, and holds the sorted set of values in
@@ -48,9 +45,13 @@ class BankValueModel
 	/**
 	 * The stack value to show under a bank slot, or {@code 0} for no label.
 	 *
-	 * <p>Tradeable items are valued at the raw wiki price. Untradeable items show nothing —
-	 * <em>except</em> the charged variant of a tradeable item (e.g. a charged trident or blowpipe),
-	 * which is valued at its tradeable base's price, via {@link ItemVariationMapping}.</p>
+	 * <p>Uses {@link ItemManager#getItemPrice(int)}, which is exactly what RuneLite's built-in Item
+	 * Prices uses: it resolves the raw wiki price for tradeable items, and for items that aren't
+	 * directly tradeable but are built from tradeable parts it returns the summed value of those
+	 * parts (via RuneLite's {@code ItemMapping}). That covers charged items (trident, blowpipe),
+	 * ornament/upgraded kits, degraded barrows, and combination items such as the avernic defender,
+	 * amulet of blood fury, echo boots, ferocious gloves and Dinh's blazing bulwark. Genuinely
+	 * untradeable items with no tradeable parts return 0, so they get no label.</p>
 	 */
 	long valueOf(int itemId, int quantity)
 	{
@@ -58,49 +59,8 @@ class BankValueModel
 		{
 			return 0;
 		}
-
-		ItemComposition comp = itemManager.getItemComposition(itemId);
-		int priceId = comp.isTradeable() ? itemId : tradeableVariant(itemId);
-		if (priceId < 0)
-		{
-			return 0;
-		}
-
-		long unit = itemManager.getItemPrice(priceId);
-		return unit * quantity;
-	}
-
-	/**
-	 * For an untradeable item, the id of a tradeable item in the same variation group whose price
-	 * stands in for its worth — e.g. a charged trident (untradeable) valued at the uncharged,
-	 * sellable trident. Returns {@code -1} when the item has no tradeable variant (a genuinely
-	 * untradeable item such as a quest item), so it gets no label.
-	 *
-	 * <p>We can't just take the group's base id: for some groups (the trident) the base is itself
-	 * untradeable and the sellable form sits later in the list, so we scan the whole group. The
-	 * lowest-id tradeable member is preferred as it's the plain uncharged form.</p>
-	 */
-	private int tradeableVariant(int itemId)
-	{
-		Collection<Integer> group = ItemVariationMapping.getVariations(ItemVariationMapping.map(itemId));
-		if (group == null)
-		{
-			return -1;
-		}
-		int best = -1;
-		for (int id : group)
-		{
-			if (id == itemId)
-			{
-				continue;
-			}
-			if (itemManager.getItemComposition(id).isTradeable() && itemManager.getItemPrice(id) > 0
-				&& (best < 0 || id < best))
-			{
-				best = id;
-			}
-		}
-		return best;
+		int unit = itemManager.getItemPrice(itemId);
+		return unit <= 0 ? 0 : (long) unit * quantity;
 	}
 
 	/**
