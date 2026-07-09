@@ -27,7 +27,7 @@ dependencies {
 }
 
 group = 'com.hotstacks'
-version = '1.0.0'
+version = '1.0.1'
 
 def pluginMainClass = 'com.hotstacks.HotStacksPluginTest'
 

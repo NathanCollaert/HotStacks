@@ -141,6 +141,7 @@ class HotStacksOverlay extends WidgetItemOverlay
 		Object aa = graphics.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
+		double scale = config.sparkleScale();
 		double time = System.currentTimeMillis() / 240.0;
 		for (double[] s : SPARKLES)
 		{
@@ -152,7 +153,7 @@ class HotStacksOverlay extends WidgetItemOverlay
 			}
 			double cx = bounds.x + s[0] * bounds.width;
 			double cy = bounds.y + s[1] * bounds.height;
-			drawStar(graphics, cx, cy, s[3] * (0.45 + 0.55 * twinkle), twinkle);
+			drawStar(graphics, cx, cy, s[3] * scale * (0.45 + 0.55 * twinkle), twinkle);
 		}
 
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,

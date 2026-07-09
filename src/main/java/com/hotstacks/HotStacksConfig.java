@@ -102,6 +102,18 @@ public interface HotStacksConfig extends Config
 		return 2;
 	}
 
+	@ConfigItem(
+		keyName = "sparkleScale",
+		name = "Sparkle size",
+		description = "Scale factor for the sparkle animation. 1.0 is the default size; increase for larger sparkles, decrease for smaller.",
+		section = SECTION_UI,
+		position = 7
+	)
+	default double sparkleScale()
+	{
+		return 1.0;
+	}
+
 	// ---- Heat map ------------------------------------------------------------
 
 	@ConfigItem(
