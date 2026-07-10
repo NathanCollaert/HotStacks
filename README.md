@@ -15,9 +15,6 @@ Items are ranked from cheapest to dearest in the current view:
 
 Ranking is re-computed when tabs are switched or search filters change. Scrolling does not affect ranking (colors stay put).
 
-### Highlighting top items
-The most valuable stacks in view get an animated **top-item effect** — embers drifting up from the item by default, with a sparkle alternative (or none). You control how many stacks qualify (default: top 2%) and the effect's size.
-
 ## Tips
 
 - Use **Heat ramp** for the most visual contrast; items are easy to rank at a glance
