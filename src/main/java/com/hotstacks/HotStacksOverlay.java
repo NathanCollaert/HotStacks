@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
+import java.awt.RadialGradientPaint;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
@@ -48,11 +49,11 @@ class HotStacksOverlay extends WidgetItemOverlay
 			return;
 		}
 
-		// The value label and the sparkle are independent: "Show stack values" only governs the
-		// label, so the sparkle can still mark top items when the label is turned off.
+		// The value label and the top-item effect are independent: "Show stack values" only governs
+		// the label, so the effect can still mark top items when the label is turned off.
 		boolean showValue = config.enabled() && value >= config.minValue();
-		boolean showSparkle = config.sparkleTopItems() && model.isTop(value, config.sparkleTopPercent());
-		if (!showValue && !showSparkle)
+		TopEffect effect = model.isTop(value, config.sparkleTopPercent()) ? config.topEffect() : TopEffect.NONE;
+		if (!showValue && effect == TopEffect.NONE)
 		{
 			return;
 		}
@@ -85,7 +86,12 @@ class HotStacksOverlay extends WidgetItemOverlay
 			OverlayUtil.renderTextLocation(graphics, new Point(x, y), text, color);
 		}
 
-		if (showSparkle)
+		// Effects sit on top so they drift around/in front of the item.
+		if (effect == TopEffect.EMBERS)
+		{
+			drawEmbers(graphics, bounds);
+		}
+		else if (effect == TopEffect.SPARKLE)
 		{
 			drawSparkles(graphics, bounds);
 		}
@@ -141,7 +147,7 @@ class HotStacksOverlay extends WidgetItemOverlay
 		Object aa = graphics.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-		double scale = config.sparkleScale();
+		double scale = effectScale();
 		double time = System.currentTimeMillis() / 240.0;
 		for (double[] s : SPARKLES)
 		{
@@ -197,5 +203,91 @@ class HotStacksOverlay extends WidgetItemOverlay
 	private static int clampAlpha(int a)
 	{
 		return a < 0 ? 0 : Math.min(255, a);
+	}
+
+	private static final int EMBER_COUNT = 6;
+	/** Golden-ratio step spreads each ember's cycle offset evenly without any clumping. */
+	private static final double GOLDEN = 0.6180339887;
+
+	/**
+	 * Glowing embers drifting up and around the slot, as if from a fire beneath it — a nod to the
+	 * "Hot Stacks" name. Each ember rises on a continuous, looping life cycle, sways sideways,
+	 * cools from yellow to red, and fades as it climbs. Positions are a pure function of time and a
+	 * per-slot seed (no stored state), so it animates smoothly and each item's embers differ.
+	 */
+	private void drawEmbers(Graphics2D graphics, Rectangle bounds)
+	{
+		Object aa = graphics.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
+		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+		double scale = effectScale();
+		double t = System.currentTimeMillis() / 1000.0;
+		double baseY = bounds.y + bounds.height;
+		double rise = bounds.height * 1.25;
+		double sizeMul = 0.7 + scale;
+		double seed = bounds.x * 0.137 + bounds.y * 0.071;
+
+		// A faint glow in the middle of the slot backs the embers.
+		double gcx = bounds.x + bounds.width / 2.0;
+		double gcy = bounds.y + bounds.height / 2.0;
+		double glowRadius = bounds.width * 0.32;
+		graphics.setPaint(new RadialGradientPaint(
+			new java.awt.geom.Point2D.Double(gcx, gcy),
+			(float) glowRadius,
+			new float[]{0f, 1f},
+			new Color[]{new Color(255, 120, 30, 38), new Color(255, 120, 30, 0)}));
+		graphics.fill(new java.awt.geom.Ellipse2D.Double(gcx - glowRadius, gcy - glowRadius, glowRadius * 2, glowRadius * 2));
+
+		for (int i = 0; i < EMBER_COUNT; i++)
+		{
+			double offset = frac(seed + i * GOLDEN);
+			double life = 1.5 + (i % 4) * 0.35;                 // seconds per rise, varied per ember
+			double p = frac(t / life + offset);                 // 0 at the base, 1 fully risen
+			double spawnX = bounds.x + bounds.width * frac(seed * 3.1 + i * 0.41);
+			double sway = Math.sin(p * (2.0 + (i % 3)) * Math.PI + i) * bounds.width * 0.14;
+			double x = spawnX + sway;
+			double y = baseY - p * rise;
+
+			// Quick fade-in at the base, fade out as it climbs; dampened for a subtle look.
+			double alpha = Math.min(1.0, p * 6.0) * (1.0 - p) * 0.55;
+			if (alpha <= 0.02)
+			{
+				continue;
+			}
+			double r = (0.7 + 0.9 * (1.0 - p)) * sizeMul;       // shrink slightly as it rises
+
+			int g = clampChannel((int) (215 - 175 * p));        // yellow (hot) → red (cool)
+			int b = clampChannel((int) (95 - 85 * p));
+			int a = clampAlpha((int) (255 * alpha));
+			fillDot(graphics, x, y, r * 1.7, new Color(255, g, b, clampAlpha((int) (a * 0.22))));
+			fillDot(graphics, x, y, r, new Color(255, g, b, a));
+			fillDot(graphics, x, y, r * 0.45, new Color(255, 245, 205, a));
+		}
+
+		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+			aa == null ? RenderingHints.VALUE_ANTIALIAS_DEFAULT : aa);
+	}
+
+	private void fillDot(Graphics2D graphics, double cx, double cy, double radius, Color color)
+	{
+		graphics.setColor(color);
+		graphics.fill(new java.awt.geom.Ellipse2D.Double(cx - radius, cy - radius, radius * 2, radius * 2));
+	}
+
+	/** The configured effect size, clamped to [0, 3] in case an out-of-range value was stored. */
+	private double effectScale()
+	{
+		double s = config.sparkleScale();
+		return s < 0 ? 0 : Math.min(3.0, s);
+	}
+
+	private static double frac(double v)
+	{
+		return v - Math.floor(v);
+	}
+
+	private static int clampChannel(int c)
+	{
+		return c < 0 ? 0 : Math.min(255, c);
 	}
 }

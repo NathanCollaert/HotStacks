@@ -6,6 +6,7 @@ import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.Range;
 
 @ConfigGroup(HotStacksConfig.GROUP)
 public interface HotStacksConfig extends Config
@@ -79,21 +80,21 @@ public interface HotStacksConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "sparkleTopItems",
-		name = "Sparkle on top items",
-		description = "Give the most valuable stacks in view a twinkling sparkle animation.",
+		keyName = "topEffect",
+		name = "Top item effect",
+		description = "Animated effect drawn on the most valuable stacks in view.",
 		section = SECTION_UI,
 		position = 5
 	)
-	default boolean sparkleTopItems()
+	default TopEffect topEffect()
 	{
-		return true;
+		return TopEffect.EMBERS;
 	}
 
 	@ConfigItem(
 		keyName = "sparkleTopPercent",
-		name = "Sparkle top (%)",
-		description = "Stacks in this dearest percentage of the current view get the sparkle. E.g. 2 = top 2%.",
+		name = "Effect top (%)",
+		description = "Stacks in this dearest percentage of the current view get the effect. E.g. 2 = top 2%.",
 		section = SECTION_UI,
 		position = 6
 	)
@@ -102,16 +103,17 @@ public interface HotStacksConfig extends Config
 		return 2;
 	}
 
+	@Range(min = 0, max = 3)
 	@ConfigItem(
 		keyName = "sparkleScale",
-		name = "Sparkle size",
-		description = "Scale factor for the sparkle animation. 1.0 is the default size; increase for larger sparkles, decrease for smaller.",
+		name = "Effect size",
+		description = "Scale factor for the top-item effect. 1.0 is the base size; increase for larger, decrease for smaller.",
 		section = SECTION_UI,
 		position = 7
 	)
 	default double sparkleScale()
 	{
-		return 1.0;
+		return 0.6;
 	}
 
 	// ---- Heat map ------------------------------------------------------------

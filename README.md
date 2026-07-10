@@ -15,12 +15,15 @@ Items are ranked from cheapest to dearest in the current view:
 
 Ranking is re-computed when tabs are switched or search filters change. Scrolling does not affect ranking (colors stay put).
 
+### Highlighting top items
+The most valuable stacks in view get an animated **top-item effect** — embers drifting up from the item by default, with a sparkle alternative (or none). You control how many stacks qualify (default: top 2%) and the effect's size.
+
 ## Tips
 
 - Use **Heat ramp** for the most visual contrast; items are easy to rank at a glance
 - Use **Two-colour gradient** to customize the look (e.g., green → red for a classic heat gradient)
-- Use **Single colour** for a clean, minimal look; combine with the sparkle to mark top items without clutter
+- Use **Single colour** for a clean, minimal look; combine with a top-item effect to mark your best stacks without clutter
 - Set **Hide below** to a higher value (e.g., 100k) to reduce clutter on low-value items
 - **Scale text by value** makes expensive items pop visually but uses more font sizes; toggle it off for a cleaner look
 - **Text background** is useful if other plugins or the game draw text at the bottom of slots; leave it off for a lighter overlay
-- Turn off **Show stack values** and keep **Sparkle on top items** on for a subtle, unique look that only highlights your most valuable stacks
+- Turn off **Show stack values** and keep the **top-item effect** on for a subtle look that only highlights your most valuable stacks
