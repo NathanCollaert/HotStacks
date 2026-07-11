@@ -14,39 +14,58 @@ public interface HotStacksConfig extends Config
 	String GROUP = "hotstacks";
 
 	@ConfigSection(
-		name = "UI",
-		description = "What is drawn on each bank slot.",
+		name = "Stack value",
+		description = "What each stack is valued at, and how the value label is shown.",
 		position = 0
 	)
-	String SECTION_UI = "ui";
+	String SECTION_STACK_VALUE = "stackValue";
 
 	@ConfigSection(
 		name = "Heat map",
 		description = "How each stack's value is coloured.",
 		position = 1
 	)
-	String SECTION_HEAT = "heat";
+	String SECTION_HEATMAP = "heatmap";
 
-	// ---- UI ------------------------------------------------------------------
+	@ConfigSection(
+		name = "Effect",
+		description = "Animated effect on the most valuable stacks.",
+		position = 2
+	)
+	String SECTION_EFFECT = "effect";
+
+	// ---- Stack value ---------------------------------------------------------
 
 	@ConfigItem(
-		keyName = "enabled",
-		name = "Show stack values",
-		description = "Draw each item's stack value on it in the bank.",
-		section = SECTION_UI,
+		keyName = "valueBasis",
+		name = "Stack value",
+		description = "Which value drives the label, heat map and effects. 'None' hides the label but keeps the heat map and effects running (on GE value).",
+		section = SECTION_STACK_VALUE,
 		position = 1
 	)
-	default boolean enabled()
+	default ValueBasis valueBasis()
 	{
-		return true;
+		return ValueBasis.GE;
+	}
+
+	@ConfigItem(
+		keyName = "minValue",
+		name = "Hide below",
+		description = "Don't draw a value label on stacks worth less than this (in the chosen value basis). 0 shows everything.",
+		section = SECTION_STACK_VALUE,
+		position = 2
+	)
+	default int minValue()
+	{
+		return 2000;
 	}
 
 	@ConfigItem(
 		keyName = "coverText",
 		name = "Text background",
-		description = "Paint a background strip behind the value at the bottom of the slot, hiding any other text drawn there (e.g. item charges).",
-		section = SECTION_UI,
-		position = 2
+		description = "Paint a background strip behind the value, hiding any other text drawn at the bottom of the slot (e.g. item charges).",
+		section = SECTION_STACK_VALUE,
+		position = 3
 	)
 	default boolean coverText()
 	{
@@ -57,9 +76,9 @@ public interface HotStacksConfig extends Config
 	@ConfigItem(
 		keyName = "textBackgroundColor",
 		name = "Background colour",
-		description = "Colour (and opacity) of the strip drawn behind the value when 'Cover other text' is on.",
-		section = SECTION_UI,
-		position = 3
+		description = "Colour (and opacity) of the strip drawn behind the value when 'Text background' is on.",
+		section = SECTION_STACK_VALUE,
+		position = 4
 	)
 	default Color textBackgroundColor()
 	{
@@ -71,20 +90,86 @@ public interface HotStacksConfig extends Config
 		keyName = "scaleFontByValue",
 		name = "Scale text by value",
 		description = "Draw dearer stacks in a larger/bolder font so they stand out even when colours are close.",
-		section = SECTION_UI,
-		position = 4
+		section = SECTION_STACK_VALUE,
+		position = 5
 	)
 	default boolean scaleFontByValue()
 	{
 		return false;
 	}
 
+	// ---- Heat map ------------------------------------------------------------
+
+	@ConfigItem(
+		keyName = "thermalTint",
+		name = "Heat map",
+		description = "Wash each slot in its heat colour, so the bank reads like a thermal map at a glance.",
+		section = SECTION_HEATMAP,
+		position = 1
+	)
+	default boolean thermalTint()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "scaleHeatmapByValue",
+		name = "Scale heatmap by value",
+		description = "Make each slot's tint stronger and larger the bigger its share of your total bank wealth.",
+		section = SECTION_HEATMAP,
+		position = 2
+	)
+	default boolean scaleHeatmapByValue()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "colourMode",
+		name = "Colour mode",
+		description = "How each stack's rank (cheapest to dearest in view) is coloured. Shared by the value label and the heat map tint.",
+		section = SECTION_HEATMAP,
+		position = 3
+	)
+	default ColourMode colourMode()
+	{
+		return ColourMode.DENSITY_FIELD;
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "lowColor",
+		name = "Lowest colour",
+		description = "Gradient and Density field modes: colour for the cheapest / coolest end.",
+		section = SECTION_HEATMAP,
+		position = 4
+	)
+	default Color lowColor()
+	{
+		return new Color(0x58, 0xC7, 0xF3, 0xFF);
+	}
+
+	@Alpha
+	@ConfigItem(
+		keyName = "highColor",
+		name = "Highest colour",
+		description = "Gradient and Density field modes: colour for the dearest / hottest end.",
+		section = SECTION_HEATMAP,
+		position = 5
+	)
+	default Color highColor()
+	{
+		return new Color(0xFF, 0xC5, 0x3D, 0xFF);
+	}
+
+	// ---- Effect --------------------------------------------------------------
+
 	@ConfigItem(
 		keyName = "topEffect",
-		name = "Top item effect",
+		name = "Effect",
 		description = "Animated effect drawn on the most valuable stacks in view.",
-		section = SECTION_UI,
-		position = 5
+		section = SECTION_EFFECT,
+		position = 1
 	)
 	default TopEffect topEffect()
 	{
@@ -95,8 +180,8 @@ public interface HotStacksConfig extends Config
 		keyName = "sparkleTopPercent",
 		name = "Effect top (%)",
 		description = "Stacks in this dearest percentage of the current view get the effect. E.g. 2 = top 2%.",
-		section = SECTION_UI,
-		position = 6
+		section = SECTION_EFFECT,
+		position = 2
 	)
 	default int sparkleTopPercent()
 	{
@@ -108,65 +193,23 @@ public interface HotStacksConfig extends Config
 		keyName = "sparkleScale",
 		name = "Effect size",
 		description = "Scale factor for the top-item effect. 1.0 is the base size; increase for larger, decrease for smaller.",
-		section = SECTION_UI,
-		position = 7
+		section = SECTION_EFFECT,
+		position = 3
 	)
 	default double sparkleScale()
 	{
 		return 0.6;
 	}
 
-	// ---- Heat map ------------------------------------------------------------
-
 	@ConfigItem(
-		keyName = "colourMode",
-		name = "Colour mode",
-		description = "How each stack's rank (cheapest to dearest in view) is coloured.",
-		section = SECTION_HEAT,
-		position = 1
-	)
-	default ColourMode colourMode()
-	{
-		return ColourMode.HEAT_RAMP;
-	}
-
-	@Alpha
-	@ConfigItem(
-		keyName = "lowColor",
-		name = "Lowest colour",
-		description = "Two-colour gradient mode only: colour for the cheapest stack in view.",
-		section = SECTION_HEAT,
-		position = 2
-	)
-	default Color lowColor()
-	{
-		// Bright cyan: readable on the dark bank, reads as the "cold" end.
-		return new Color(0x58, 0xC7, 0xF3, 0xFF);
-	}
-
-	@Alpha
-	@ConfigItem(
-		keyName = "highColor",
-		name = "Highest colour",
-		description = "Two-colour gradient mode only: colour for the dearest stack in view.",
-		section = SECTION_HEAT,
-		position = 3
-	)
-	default Color highColor()
-	{
-		// Warm gold: strong hue contrast against the cyan low end, reads as "hot"/valuable.
-		return new Color(0xFF, 0xC5, 0x3D, 0xFF);
-	}
-
-	@ConfigItem(
-		keyName = "minValue",
-		name = "Hide below (gp)",
-		description = "Don't draw a value on stacks worth less than this, to cut clutter. 0 shows everything.",
-		section = SECTION_HEAT,
+		keyName = "scaleEffectByValue",
+		name = "Scale effect by value",
+		description = "Make the effect brighter and faster on stacks that are a bigger share of your total bank wealth.",
+		section = SECTION_EFFECT,
 		position = 4
 	)
-	default int minValue()
+	default boolean scaleEffectByValue()
 	{
-		return 2000;
+		return true;
 	}
 }

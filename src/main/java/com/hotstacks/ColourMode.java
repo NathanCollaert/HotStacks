@@ -12,7 +12,9 @@ public enum ColourMode
 	/** Blend between the two configured colours. */
 	GRADIENT("Two-colour gradient"),
 	/** Every value drawn plain white, regardless of worth. */
-	SINGLE("Single colour (white)");
+	SINGLE("Single colour (white)"),
+	/** Continuous density field over the whole bank, ramped between the two configured colours. */
+	DENSITY_FIELD("Density field");
 
 	private final String label;
 

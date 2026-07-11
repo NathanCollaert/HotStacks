@@ -6,6 +6,7 @@ import javax.inject.Singleton;
 import net.runelite.api.Client;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.api.widgets.ComponentID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
@@ -31,27 +32,34 @@ class BankValueModel
 
 	private final Client client;
 	private final ItemManager itemManager;
+	private final HotStacksConfig config;
 
 	/** Sorted (ascending) shown values in the current view; what each item's rank is measured against. */
 	private volatile long[] sorted = EMPTY;
+	/** Total value of the current view (open tab / search / whole bank) — what effects scale against. */
+	private volatile long viewTotal;
+	/** Signature of the shown slots the current {@link #sorted} was built from; -1 forces a rebuild. */
+	private long signature = -1;
 
 	@Inject
-	BankValueModel(Client client, ItemManager itemManager)
+	BankValueModel(Client client, ItemManager itemManager, HotStacksConfig config)
 	{
 		this.client = client;
 		this.itemManager = itemManager;
+		this.config = config;
 	}
 
 	/**
-	 * The stack value to show under a bank slot, or {@code 0} for no label.
-	 *
-	 * <p>Uses {@link ItemManager#getItemPrice(int)}, which is exactly what RuneLite's built-in Item
-	 * Prices uses: it resolves the raw wiki price for tradeable items, and for items that aren't
-	 * directly tradeable but are built from tradeable parts it returns the summed value of those
-	 * parts (via RuneLite's {@code ItemMapping}). That covers charged items (trident, blowpipe),
-	 * ornament/upgraded kits, degraded barrows, and combination items such as the avernic defender,
-	 * amulet of blood fury, echo boots, ferocious gloves and Dinh's blazing bulwark. Genuinely
-	 * untradeable items with no tradeable parts return 0, so they get no label.</p>
+	 * The stack value to show for a bank slot, or {@code 0} for no value, in the current
+	 * {@link ValueBasis}:
+	 * <ul>
+	 *   <li><b>GE</b> (and the {@code NONE} label-off case) — {@link ItemManager#getItemPrice(int)},
+	 *   the same source as RuneLite's built-in Item Prices, which resolves combination items
+	 *   (charged tridents, avernic defender, echo boots, …) to their tradeable parts.</li>
+	 *   <li><b>High alch</b> — the item's high-alchemy value.</li>
+	 *   <li><b>High alch profit</b> — high-alch value minus the current nature-rune price; a
+	 *   non-positive result yields 0 (no value).</li>
+	 * </ul>
 	 */
 	long valueOf(int itemId, int quantity)
 	{
@@ -59,15 +67,51 @@ class BankValueModel
 		{
 			return 0;
 		}
-		int unit = itemManager.getItemPrice(itemId);
-		return unit <= 0 ? 0 : (long) unit * quantity;
+		long unit = unitValue(itemId);
+		return unit <= 0 ? 0 : unit * quantity;
+	}
+
+	private long unitValue(int itemId)
+	{
+		ValueBasis basis = config.valueBasis();
+		switch (basis)
+		{
+			case HIGH_ALCH:
+				return itemManager.getItemComposition(itemId).getHaPrice();
+			case HIGH_ALCH_PROFIT:
+				return (long) itemManager.getItemComposition(itemId).getHaPrice() - itemManager.getItemPrice(ItemID.NATURERUNE);
+			case NONE:      // label hidden, but heat map / effects still run on the GE value
+			case GE:
+			default:
+				return itemManager.getItemPrice(itemId);
+		}
+	}
+
+	/** Total value of the current view (tab / search / whole bank); what {@code Scale effect by value} uses. */
+	long viewTotal()
+	{
+		return viewTotal;
+	}
+
+	/** Forces {@link #syncToView()} to rebuild on its next call (e.g. once a tick, to pick up price
+	 *  changes even when the shown items are unchanged). */
+	void invalidate()
+	{
+		signature = -1;
 	}
 
 	/**
-	 * Rebuilds the value set from the currently-shown bank slots. Cheap enough to run every tick;
-	 * a no-op when the bank isn't open.
+	 * Brings the ranking set in step with the bank slots currently shown. Meant to run every frame
+	 * on {@code BeforeRender}, just before the overlay draws, so the ranking reflects exactly the
+	 * same widget state the render sees — that is what prevents the one-frame flash when the shown
+	 * set changes (e.g. opening the whole bank from a tab), where the overlay would otherwise rank
+	 * every item against the previous, smaller set.
+	 *
+	 * <p>A cheap signature over the shown slots is computed first; the expensive pricing/sort pass
+	 * only runs when that signature changes (or after {@link #invalidate()}), so the common
+	 * unchanged frame is just one light scan.</p>
 	 */
-	void recompute()
+	void syncToView()
 	{
 		Widget container = client.getWidget(ComponentID.BANK_ITEM_CONTAINER);
 		ItemContainer bank = client.getItemContainer(InventoryID.BANK);
@@ -75,11 +119,33 @@ class BankValueModel
 		if (children == null || bank == null)
 		{
 			sorted = EMPTY;
+			viewTotal = 0;
+			signature = 0;
 			return;
 		}
 
 		// The bank item widgets are the first bank.size() children; later children are tabs etc.
 		int slots = Math.min(bank.size(), children.length);
+
+		// Cheap pass: signature of the shown (id, quantity) slots — no pricing.
+		long sig = 1469598103934665603L;
+		for (int i = 0; i < slots; i++)
+		{
+			Widget child = children[i];
+			if (child == null || child.isSelfHidden() || child.getItemId() <= 0)
+			{
+				continue;
+			}
+			sig = (sig ^ child.getItemId()) * 1099511628211L;
+			sig = (sig ^ child.getItemQuantity()) * 1099511628211L;
+		}
+		if (sig == signature)
+		{
+			return;
+		}
+		signature = sig;
+
+		// The view changed: price the shown slots and rebuild the ranking set.
 		long[] values = new long[slots];
 		int n = 0;
 		for (int i = 0; i < slots; i++)
@@ -95,6 +161,13 @@ class BankValueModel
 				values[n++] = value;
 			}
 		}
+
+		long total = 0;
+		for (int i = 0; i < n; i++)
+		{
+			total += values[i];
+		}
+		viewTotal = total;
 
 		long[] s = Arrays.copyOf(values, n);
 		Arrays.sort(s);

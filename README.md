@@ -1,26 +1,15 @@
 # Hot Stacks
 
-A RuneLite plugin that visualizes the value of items in your bank with a heat-map overlay. Each stack displays its value beneath it, colored and ranked so you can see at a glance which items are worth the most.
+A RuneLite plugin that turns your bank into a heat map of value. Every stack is scored by what it's worth, then shown as a coloured label, a thermal tint, or a continuous density field, so you can see at a glance where your wealth lives.
 
-## How It Works
+## How it works
 
-### Value Calculation
-Each stack's value = item unit price × quantity
-
-### Ranking
-Items are ranked from cheapest to dearest in the current view:
-- **Whole bank shown** → ranking includes all items across all tabs
-- **Single tab open** → ranking includes only that tab's items
-- **Bank search active** → ranking includes only matching items
-
-Ranking is re-computed when tabs are switched or search filters change. Scrolling does not affect ranking (colors stay put).
+Everything keys off one number per stack, its **stack value**, which drives the label, the heat-map colours, and the effects alike.
 
 ## Tips
 
-- Use **Heat ramp** for the most visual contrast; items are easy to rank at a glance
-- Use **Two-colour gradient** to customize the look (e.g., green → red for a classic heat gradient)
-- Use **Single colour** for a clean, minimal look; combine with a top-item effect to mark your best stacks without clutter
-- Set **Hide below** to a higher value (e.g., 100k) to reduce clutter on low-value items
-- **Scale text by value** makes expensive items pop visually but uses more font sizes; toggle it off for a cleaner look
-- **Text background** is useful if other plugins or the game draw text at the bottom of slots; leave it off for a lighter overlay
-- Turn off **Show stack values** and keep the **top-item effect** on for a subtle look that only highlights your most valuable stacks
+- **Density field** with **Lowest = green, Highest = red** gives the classic thermal-map look.
+- Set **Stack value → None** and keep an effect on for a subtle look that only marks your best stacks.
+- Switch **Stack value** to **High alch** / **High alch profit** to turn the whole bank into an alching heat map — untradeable-but-alchable items appear too.
+- Set **Hide below** higher (e.g. 100k) to cut clutter on low-value stacks.
+- **Scale text by value** draws dearer stacks in a heavier font; **Text background** paints a strip behind the value to hide any other text drawn on the slot.

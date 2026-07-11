@@ -5,8 +5,10 @@ public enum TopEffect
 {
 	/** No effect. */
 	NONE("None"),
-	/** Glowing embers drifting up and around the slot, as if from a fire beneath it. */
+	/** Glowing embers rising from the bottom of the slot, as if from a fire beneath it. */
 	EMBERS("Embers"),
+	/** Glowing embers spitting outward from the centre, as if the item were a hot coal. */
+	RADIAL_EMBERS("Radial embers"),
 	/** Twinkling four-point stars around the slot. */
 	SPARKLE("Sparkle");
 
