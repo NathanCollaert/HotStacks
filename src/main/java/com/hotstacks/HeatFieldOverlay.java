@@ -1,11 +1,12 @@
 package com.hotstacks;
 
+import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
-import java.awt.Rectangle;
+import java.awt.LinearGradientPaint;
 import java.awt.RenderingHints;
-import java.awt.Shape;
+import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -23,34 +24,38 @@ import net.runelite.client.ui.overlay.OverlayPosition;
  * and that surface is coloured along the configured Lowest→Highest ramp. Where valuable stacks sit
  * (or cluster) the field runs hot, so you can see at a glance where your wealth lives.
  *
- * <p>Unlike the per-slot tint this is one whole-bank pass, so it lives in its own {@link Overlay}
- * drawn over the bank interface. The field is rendered once to a small (downscaled) image and
- * cached; it only rebuilds when the shown slots, their values, scroll position or the ramp colours
- * change, and is drawn each frame as a single bilinear-scaled blit.</p>
+ * <p>The field is built in <b>content space</b>: it covers the whole open tab (all non-hidden
+ * slots, including any scrolled out of view) using positions relative to the top-left slot, and is
+ * normalised once over the whole tab. Scrolling therefore leaves the cached image unchanged — the
+ * field just pans with the items, so there's no per-frame rebuild or re-normalisation flicker. The
+ * cache only rebuilds when the tab's items, their values or the ramp colours change.</p>
+ *
+ * <p>The left/right edge fade is baked into the image (the bank doesn't scroll horizontally). The
+ * top/bottom fade is at the viewport edges, which the content slides past, so it's applied each
+ * frame with an offscreen buffer and a {@code DstIn} gradient mask rather than baked in.</p>
  */
 @Singleton
 class HeatFieldOverlay extends Overlay
 {
-	private static final int DOWNSCALE = 3;   // field built at 1/3 res, scaled up for a soft look
+	private static final int DOWNSCALE = 3;
 	private static final int MAX_ALPHA = 205;
-	private static final int EDGE_FEATHER_X = 20;        // px fade at the left/right bank edges
-	private static final int EDGE_FEATHER_TOP = 22;      // px fade at the top edge
-	private static final int EDGE_FEATHER_BOTTOM = 8;    // narrower: fades into open space below
-	// Let the top fade start above the container (in the gap below the tabs) so the fade doesn't
-	// dim the top item row — it completes over the gap instead of eating into the items.
-	private static final int TOP_BLEED = 12;
+	private static final int PAD = 72;                 // image padding; must exceed a blob's reach
+	private static final int EDGE_FEATHER_X = 20;
+	private static final int EDGE_FEATHER_TOP = 22;
+	private static final int EDGE_FEATHER_BOTTOM = 8;
+	private static final int TOP_BLEED = 12;           // top fade spills into the gap below the tabs
 	private static final long FNV = 1469598103934665603L;
 	private static final long FNV_PRIME = 1099511628211L;
-	// Image padding around the slots: must exceed a blob's reach so edge blobs fully fade inside
-	// the image (no hard cut at the image boundary, which the container-edge feather doesn't reach).
-	private static final int PAD = 72;
 
 	private final Client client;
 	private final BankValueModel model;
 	private final HotStacksConfig config;
 
-	private BufferedImage cache;
+	private BufferedImage cache;   // content-space field, left/right fade baked in
 	private long cacheKey;
+	private int cacheW;
+	private int cacheH;
+	private BufferedImage frame;   // reused viewport-sized scratch buffer for the top/bottom mask
 
 	@Inject
 	HeatFieldOverlay(Client client, BankValueModel model, HotStacksConfig config)
@@ -78,36 +83,27 @@ class HeatFieldOverlay extends Overlay
 			return null;
 		}
 		Widget[] children = container.getChildren();
-		if (children == null)
-		{
-			return null;
-		}
-
-		// Derive the container rectangle from its canvas location (same space as the slots'
-		// getCanvasLocation), so the clip and edge feather line up exactly with the item area.
 		Point cloc = container.getCanvasLocation();
-		if (cloc == null)
+		if (children == null || cloc == null)
 		{
-			cache = null;
 			return null;
 		}
-		Rectangle view = new Rectangle(cloc.getX(), cloc.getY(), container.getWidth(), container.getHeight());
+		int vx = cloc.getX();
+		int vy = cloc.getY();
+		int vw = container.getWidth();
+		int vh = container.getHeight();
 
-		// Only slots on (or just off) screen contribute — keeps the field viewport-sized and cheap.
-		int margin = 40;
-		int loX = view.x - margin;
-		int loY = view.y - margin;
-		int hiX = view.x + view.width + margin;
-		int hiY = view.y + view.height + margin;
-
+		// Gather EVERY non-hidden slot in the tab (scrolled-off ones too — they're clipped, not
+		// hidden). Positions are canvas coords this frame; the cache keys off positions relative to
+		// the top-left slot, which are scroll-invariant.
 		int[] xs = new int[children.length];
 		int[] ys = new int[children.length];
 		double[] peaks = new double[children.length];
 		int n = 0;
-		int slotMinX = Integer.MAX_VALUE;
-		int slotMinY = Integer.MAX_VALUE;
-		int slotMaxX = Integer.MIN_VALUE;
-		int slotMaxY = Integer.MIN_VALUE;
+		int minX = Integer.MAX_VALUE;
+		int minY = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE;
+		int maxY = Integer.MIN_VALUE;
 		for (Widget child : children)
 		{
 			if (child == null || child.isSelfHidden() || child.getItemId() <= 0)
@@ -126,18 +122,14 @@ class HeatFieldOverlay extends Overlay
 			}
 			int cx = loc.getX() + child.getWidth() / 2;
 			int cy = loc.getY() + child.getHeight() / 2;
-			if (cx < loX || cx > hiX || cy < loY || cy > hiY)
-			{
-				continue;
-			}
 			xs[n] = cx;
 			ys[n] = cy;
 			peaks[n] = model.rankFraction(value);
 			n++;
-			slotMinX = Math.min(slotMinX, cx);
-			slotMinY = Math.min(slotMinY, cy);
-			slotMaxX = Math.max(slotMaxX, cx);
-			slotMaxY = Math.max(slotMaxY, cy);
+			minX = Math.min(minX, cx);
+			minY = Math.min(minY, cy);
+			maxX = Math.max(maxX, cx);
+			maxY = Math.max(maxY, cy);
 		}
 
 		if (n == 0)
@@ -146,27 +138,21 @@ class HeatFieldOverlay extends Overlay
 			return null;
 		}
 
-		// Image origin/size are recomputed from the current slot positions every frame, so the
-		// field always draws over the bank wherever it is (e.g. after the side panel shifts it).
-		int ox = slotMinX - PAD;
-		int oy = slotMinY - PAD;
-		int ow = slotMaxX + PAD - ox;
-		int oh = slotMaxY + PAD - oy;
+		int ox = minX - PAD;   // canvas position of the image's top-left (current frame)
+		int oy = minY - PAD;
+		int ow = maxX + PAD - ox;
+		int oh = maxY + PAD - oy;
 
-		// The cache key uses positions RELATIVE to the origin (and the view relative to it), so a
-		// pure shift leaves the key unchanged — we reuse the image and just draw it at the new
-		// origin, instead of rebuilding.
+		// Scroll-invariant key: relative positions + the horizontal geometry the baked L/R fade uses.
 		long key = FNV;
 		for (int i = 0; i < n; i++)
 		{
-			key = (key ^ (xs[i] - ox)) * FNV_PRIME;
-			key = (key ^ (ys[i] - oy)) * FNV_PRIME;
+			key = (key ^ (xs[i] - minX)) * FNV_PRIME;
+			key = (key ^ (ys[i] - minY)) * FNV_PRIME;
 			key = (key ^ Double.doubleToLongBits(peaks[i])) * FNV_PRIME;
 		}
-		key = (key ^ (view.x - ox)) * FNV_PRIME;
-		key = (key ^ (view.y - oy)) * FNV_PRIME;
-		key = (key ^ view.width) * FNV_PRIME;
-		key = (key ^ view.height) * FNV_PRIME;
+		key = (key ^ (ox - vx)) * FNV_PRIME;   // image-left relative to viewport-left (horizontal only)
+		key = (key ^ vw) * FNV_PRIME;
 		key = (key ^ ow) * FNV_PRIME;
 		key = (key ^ oh) * FNV_PRIME;
 		key = (key ^ config.lowColor().getRGB()) * FNV_PRIME;
@@ -174,33 +160,65 @@ class HeatFieldOverlay extends Overlay
 
 		if (key != cacheKey || cache == null)
 		{
-			rebuild(xs, ys, peaks, n, ox, oy, ow, oh, view);
+			rebuild(xs, ys, peaks, n, ox, oy, ow, oh, vx, vw);
 			cacheKey = key;
 		}
 
-		Shape oldClip = graphics.getClip();
-		// Expand the clip upward by the bleed so the top fade can spill into the gap below the tabs.
-		graphics.setClip(view.x, view.y - TOP_BLEED, view.width, view.height + TOP_BLEED);
-		Object oldInterp = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-		graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-		graphics.drawImage(cache, ox, oy, ow, oh, null);
-		if (oldInterp != null)
-		{
-			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, oldInterp);
-		}
-		graphics.setClip(oldClip);
+		drawMasked(graphics, ox, oy, vx, vy, vw, vh);
 		return null;
 	}
 
-	/** Builds the cached density image for the gathered slots, relative to origin ({@code ox},{@code oy}). */
-	private void rebuild(int[] xs, int[] ys, double[] peaks, int n, int ox, int oy, int ow, int oh, Rectangle view)
+	/**
+	 * Blits the cached field to the viewport through an offscreen buffer, then multiplies its alpha
+	 * by a vertical gradient (via {@code DstIn}) so the top and bottom fade out at the viewport edges.
+	 */
+	private void drawMasked(Graphics2D graphics, int ox, int oy, int vx, int vy, int vw, int vh)
+	{
+		int bufW = vw;
+		int bufH = vh + TOP_BLEED;
+		if (bufW <= 0 || bufH <= 0)
+		{
+			return;
+		}
+		if (frame == null || frame.getWidth() != bufW || frame.getHeight() != bufH)
+		{
+			frame = new BufferedImage(bufW, bufH, BufferedImage.TYPE_INT_ARGB);
+		}
+
+		Graphics2D bg = frame.createGraphics();
+		bg.setComposite(AlphaComposite.Clear);
+		bg.fillRect(0, 0, bufW, bufH);
+		bg.setComposite(AlphaComposite.SrcOver);
+		bg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+
+		// Buffer's top-left is canvas (vx, vy - TOP_BLEED); place the cached field within it.
+		bg.drawImage(cache, ox - vx, oy - (vy - TOP_BLEED), cacheW, cacheH, null);
+
+		// Top/bottom feather mask: alpha 0 at the buffer edges, 1 across the middle.
+		float topStop = Math.min(0.49f, (float) EDGE_FEATHER_TOP / bufH);
+		float bottomStop = Math.max(topStop + 0.01f, 1f - (float) EDGE_FEATHER_BOTTOM / bufH);
+		Color clear = new Color(255, 255, 255, 0);
+		Color solid = new Color(255, 255, 255, 255);
+		bg.setComposite(AlphaComposite.DstIn);
+		bg.setPaint(new LinearGradientPaint(
+			new Point2D.Float(0, 0), new Point2D.Float(0, bufH),
+			new float[]{0f, topStop, bottomStop, 1f},
+			new Color[]{clear, solid, solid, clear}));
+		bg.fillRect(0, 0, bufW, bufH);
+		bg.dispose();
+
+		graphics.drawImage(frame, vx, vy - TOP_BLEED, null);
+	}
+
+	/** Builds the cached content-space field (left/right fade baked; top/bottom done at draw time). */
+	private void rebuild(int[] xs, int[] ys, double[] peaks, int n, int ox, int oy, int ow, int oh, int vx, int vw)
 	{
 		int gw = Math.max(1, ow / DOWNSCALE);
 		int gh = Math.max(1, oh / DOWNSCALE);
 		float[] field = new float[gw * gh];
 
 		double blobR = 60.0 / DOWNSCALE;   // stamp reach (grid px); PAD must exceed blobR*DOWNSCALE
-		double sigma = blobR / 3.0;        // tight enough that the blob is ~1% by its stamp edge
+		double sigma = blobR / 3.0;
 		double twoSigmaSq = 2.0 * sigma * sigma;
 		for (int i = 0; i < n; i++)
 		{
@@ -221,7 +239,6 @@ class HeatFieldOverlay extends Overlay
 			}
 		}
 
-		// Blur the summed field to erase the ridges where individual blobs meet.
 		boxBlur(field, gw, gh, 2, 2);
 
 		double max = 0;
@@ -246,21 +263,15 @@ class HeatFieldOverlay extends Overlay
 			}
 			int px = i % gw;
 			int py = i / gw;
-			// Fade the field to nothing as it nears the bank container edge, so the hard clip
-			// boundary is invisible instead of slicing bright blobs into a straight line.
+			// Left/right fade only (horizontal is scroll-fixed); top/bottom is masked at draw time.
 			double canvasX = ox + px * DOWNSCALE;
-			double canvasY = oy + py * DOWNSCALE;
-			double distX = Math.min(canvasX - view.x, view.x + view.width - canvasX);
-			double distTop = canvasY - (view.y - TOP_BLEED);   // top fade starts above the container
-			double distBottom = view.y + view.height - canvasY;
-			if (distX <= 0 || distTop <= 0 || distBottom <= 0)
+			double distX = Math.min(canvasX - vx, vx + vw - canvasX);
+			if (distX <= 0)
 			{
 				continue;
 			}
 			double feather = Math.min(1.0, distX / EDGE_FEATHER_X);
-			feather = Math.min(feather, Math.min(1.0, distTop / EDGE_FEATHER_TOP));
-			feather = Math.min(feather, Math.min(1.0, distBottom / EDGE_FEATHER_BOTTOM));
-			feather = feather * feather * (3.0 - 2.0 * feather);   // smoothstep — no sharp knee
+			feather = feather * feather * (3.0 - 2.0 * feather);   // smoothstep
 
 			Color c = HeatColor.blend(t, low, high);
 			int a = (int) (Math.min(1.0, t * 1.25) * MAX_ALPHA * feather);
@@ -271,6 +282,8 @@ class HeatFieldOverlay extends Overlay
 			img.setRGB(px, py, (a << 24) | (c.getRed() << 16) | (c.getGreen() << 8) | c.getBlue());
 		}
 		cache = img;
+		cacheW = ow;
+		cacheH = oh;
 	}
 
 	/** Separable box blur, {@code passes} times, to smooth the summed density field. */
