@@ -4,9 +4,13 @@ import com.google.inject.Provides;
 import javax.inject.Inject;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -14,7 +18,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 @PluginDescriptor(
 	name = "Hot Stacks",
 	description = "Shows each bank stack's value on it as a heat map; colours rank against the whole bank, or the open tab",
-	tags = {"bank", "value", "wealth", "heatmap", "heat", "density map", "density", "embers", "price", "gp", "stacks", "worth"}
+	tags = {"bank", "value", "wealth", "heatmap", "heat", "density map", "density", "embers", "price", "gp", "stacks", "worth", "withdraws"}
 )
 public class HotStacksPlugin extends Plugin
 {
@@ -26,6 +30,8 @@ public class HotStacksPlugin extends Plugin
 	private HeatFieldOverlay heatFieldOverlay;
 	@Inject
 	private BankValueModel model;
+	@Inject
+	private WithdrawalTracker withdrawalTracker;
 
 	@Provides
 	HotStacksConfig provideConfig(ConfigManager configManager)
@@ -38,6 +44,7 @@ public class HotStacksPlugin extends Plugin
 	{
 		overlayManager.add(heatFieldOverlay);
 		overlayManager.add(overlay);
+		withdrawalTracker.load();
 	}
 
 	@Override
@@ -66,11 +73,39 @@ public class HotStacksPlugin extends Plugin
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		// Changing the value basis (or any setting) alters the values without changing the shown
+		// Changing the value source (or any setting) alters the values without changing the shown
 		// items, so force a rebuild rather than waiting for the signature to change.
 		if (HotStacksConfig.GROUP.equals(event.getGroup()))
 		{
 			model.invalidate();
 		}
+	}
+
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked event)
+	{
+		// A withdraw click on a bank slot — guarded by interface so GE collects, deposit boxes and
+		// non-bank "Withdraw" options elsewhere don't get counted. Text-matched rather than by
+		// MenuAction since withdraw quantity/mode variants (1/5/10/X/All) share no single action id.
+		if (!event.getMenuOption().startsWith("Withdraw"))
+		{
+			return;
+		}
+		int group = WidgetUtil.componentToInterface(event.getWidgetId());
+		if (group != InterfaceID.BANKMAIN && group != InterfaceID.SHARED_BANK)
+		{
+			return;
+		}
+		// Recorded immediately (so a click is never lost), but not yet visible to ranking — the model
+		// only reveals it once the bank's own contents actually reflect the withdrawal, avoiding a
+		// one-tick flash where a slot ranks by its new count while still showing its old quantity.
+		withdrawalTracker.record(event.getItemId());
+	}
+
+	@Subscribe
+	public void onRuneScapeProfileChanged(RuneScapeProfileChanged event)
+	{
+		// Withdrawal counts are per-account; reload so an alt's habits don't bleed into another's.
+		withdrawalTracker.load();
 	}
 }

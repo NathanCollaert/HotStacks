@@ -76,6 +76,14 @@ class HeatFieldOverlay extends Overlay
 			return null;
 		}
 
+		// Stand down over a loadout (Bank Tag Layout): its curated, fake-quantity items would skew
+		// the field.
+		if (model.layoutActive())
+		{
+			cache = null;
+			return null;
+		}
+
 		Widget container = client.getWidget(ComponentID.BANK_ITEM_CONTAINER);
 		if (container == null || container.isHidden())
 		{
@@ -110,7 +118,7 @@ class HeatFieldOverlay extends Overlay
 			{
 				continue;
 			}
-			long value = model.valueOf(child.getItemId(), child.getItemQuantity());
+			long value = model.weightOf(child.getItemId(), child.getItemQuantity());
 			if (value <= 0)
 			{
 				continue;

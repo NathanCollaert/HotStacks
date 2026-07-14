@@ -14,44 +14,65 @@ public interface HotStacksConfig extends Config
 	String GROUP = "hotstacks";
 
 	@ConfigSection(
-		name = "Stack value",
-		description = "What each stack is valued at, and how the value label is shown.",
+		name = "General",
+		description = "What single number drives the label, heat map and effects alike.",
 		position = 0
+	)
+	String SECTION_GENERAL = "general";
+
+	@ConfigSection(
+		name = "Stack value",
+		description = "Whether and how the value label is shown.",
+		position = 1
 	)
 	String SECTION_STACK_VALUE = "stackValue";
 
 	@ConfigSection(
 		name = "Heat map",
 		description = "How each stack's value is coloured.",
-		position = 1
+		position = 2
 	)
 	String SECTION_HEATMAP = "heatmap";
 
 	@ConfigSection(
 		name = "Effect",
 		description = "Animated effect on the most valuable stacks.",
-		position = 2
+		position = 3
 	)
 	String SECTION_EFFECT = "effect";
+
+	// ---- General --------------------------------------------------------------
+
+	@ConfigItem(
+		keyName = "valueSource",
+		name = "Value source",
+		description = "Which number drives the label, heat map and effects: a Grand Exchange/alch value, or how many times you've withdrawn the item.",
+		section = SECTION_GENERAL,
+		position = 1
+	)
+	default ValueSource valueSource()
+	{
+		return ValueSource.GE;
+	}
 
 	// ---- Stack value ---------------------------------------------------------
 
 	@ConfigItem(
-		keyName = "valueBasis",
+		keyName = "showStackValue",
 		name = "Stack value",
-		description = "Which value drives the label, heat map and effects. 'None' hides the label but keeps the heat map and effects running (on GE value).",
+		description = "Draw the value label on each stack. Turning this off still leaves the heat map and effects running.",
 		section = SECTION_STACK_VALUE,
 		position = 1
 	)
-	default ValueBasis valueBasis()
+	default boolean showStackValue()
 	{
-		return ValueBasis.GE;
+		return true;
 	}
 
 	@ConfigItem(
 		keyName = "minValue",
 		name = "Hide below",
-		description = "Don't draw a value label on stacks worth less than this (in the chosen value basis). 0 shows everything.",
+		description = "Don't draw a value label on stacks worth less than this (in the chosen value source). 0 shows everything. Ignored when the value source is Withdraws.",
 		section = SECTION_STACK_VALUE,
 		position = 2
 	)

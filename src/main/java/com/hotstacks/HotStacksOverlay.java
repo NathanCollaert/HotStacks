@@ -48,20 +48,31 @@ class HotStacksOverlay extends WidgetItemOverlay
 	@Override
 	public void renderItemOverlay(Graphics2D graphics, int itemId, WidgetItem widgetItem)
 	{
-		long value = model.valueOf(itemId, widgetItem.getQuantity());
-		if (value <= 0)
+		if (model.layoutActive())
 		{
-			// No value in the current basis (untradeable in GE mode, un-alchable, ≤0 profit, …).
+			// A loadout (Bank Tag Layout) is showing — its curated, fake-quantity items would skew
+			// the values, so draw nothing over it.
 			return;
 		}
 
-		// Everything keys off the one stack value. The label is shown unless the basis is None (and
-		// it clears the clutter threshold); the tint and effect run regardless of the label.
-		boolean showValue = config.valueBasis() != ValueBasis.NONE && value >= config.minValue();
+		long value = model.weightOf(itemId, widgetItem.getQuantity());
+		if (value <= 0)
+		{
+			// No weight in the current source (untradeable in GE mode, un-alchable, ≤0 profit, never
+			// withdrawn, …).
+			return;
+		}
+
+		// Everything keys off the one weight. The label is shown when the "Stack value" toggle is on
+		// and (for the money sources) the stack clears the clutter threshold; a withdraw count of any
+		// size is shown as-is, since there's no gp-scale threshold that means anything for it. The
+		// tint and effect run regardless of the label.
+		boolean isWithdraws = config.valueSource() == ValueSource.WITHDRAWS;
+		boolean showValue = config.showStackValue() && (isWithdraws || value >= config.minValue());
 		// The per-slot tint handles every colour mode except Density field, which is drawn as one
 		// whole-bank pass by HeatFieldOverlay instead.
 		boolean tint = config.thermalTint() && config.colourMode() != ColourMode.DENSITY_FIELD;
-		TopEffect effect = model.isTop(value, config.sparkleTopPercent()) ? config.topEffect() : TopEffect.NONE;
+		TopEffect effect = model.isTop(value, itemId) ? config.topEffect() : TopEffect.NONE;
 		if (!showValue && !tint && effect == TopEffect.NONE)
 		{
 			return;
@@ -87,7 +98,7 @@ class HotStacksOverlay extends WidgetItemOverlay
 		// 2. Value label.
 		if (showValue)
 		{
-			String text = QuantityFormatter.quantityToStackSize(value);
+			String text = isWithdraws ? Long.toString(value) : QuantityFormatter.quantityToStackSize(value);
 			graphics.setFont(fontFor(rank));
 			FontMetrics metrics = graphics.getFontMetrics();
 			int x = bounds.x + (bounds.width - metrics.stringWidth(text)) / 2;
