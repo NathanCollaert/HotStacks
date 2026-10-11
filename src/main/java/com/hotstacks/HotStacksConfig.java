@@ -129,7 +129,7 @@ public interface HotStacksConfig extends Config
 	@ConfigItem(
 		keyName = "scaleHeatmapByValue",
 		name = "Scale heatmap by value",
-		description = "Make each slot's tint stronger and larger the bigger its share of your total bank wealth.",
+		description = "Make each slot's tint stronger and larger the higher its stack ranks in the current view.",
 		section = SECTION_HEATMAP,
 		position = 2
 	)
@@ -216,7 +216,7 @@ public interface HotStacksConfig extends Config
 	@ConfigItem(
 		keyName = "scaleEffectByValue",
 		name = "Scale effect by value",
-		description = "Make the effect brighter and faster on stacks that are a bigger share of your total bank wealth.",
+		description = "Make the effect brighter and larger on stacks that are a bigger share of the current view's total value.",
 		section = SECTION_EFFECT,
 		position = 4
 	)
