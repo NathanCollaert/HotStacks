@@ -8,6 +8,7 @@ import java.awt.RadialGradientPaint;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
+import java.awt.geom.Point2D;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.Point;
@@ -17,21 +18,12 @@ import net.runelite.client.ui.overlay.OverlayUtil;
 import net.runelite.client.ui.overlay.WidgetItemOverlay;
 import net.runelite.client.util.QuantityFormatter;
 
-/**
- * Draws each bank stack's value on its slot, coloured by the stack's rank among everything in
- * view (cheapest → dearest), an optional thermal tint of the whole slot, and an animated effect on
- * the most valuable stacks. {@code renderItemOverlay} is invoked once per visible bank item each
- * frame.
- */
 @Singleton
 class HotStacksOverlay extends WidgetItemOverlay
 {
-	/** Share of total bank wealth at which value-scaling reaches full intensity. */
-	private static final double WEALTH_REF = 0.06;
-	/** Intensity multiplier range for value-scaling (effect and heat map tint). */
+	private static final double FULL_INTENSITY_WEALTH_SHARE = 0.06;
 	private static final double INTENSITY_FLOOR = 0.3;
 	private static final double INTENSITY_CEIL = 1.35;
-	/** Base alpha of the heat map tint at its fixed 40% strength. */
 	private static final int TINT_BASE_ALPHA = 84;
 
 	private final BankValueModel model;
@@ -50,28 +42,18 @@ class HotStacksOverlay extends WidgetItemOverlay
 	{
 		if (model.layoutActive())
 		{
-			// A loadout (Bank Tag Layout) is showing — its curated, fake-quantity items would skew
-			// the values, so draw nothing over it.
 			return;
 		}
 
 		long value = model.weightOf(itemId, widgetItem.getQuantity());
 		if (value <= 0)
 		{
-			// No weight in the current source (untradeable in GE mode, un-alchable, ≤0 profit, never
-			// withdrawn, …).
 			return;
 		}
 
-		// Everything keys off the one weight. The label is shown when the "Stack value" toggle is on
-		// and (for the money sources) the stack clears the clutter threshold; a withdraw count of any
-		// size is shown as-is, since there's no gp-scale threshold that means anything for it. The
-		// tint and effect run regardless of the label.
-		boolean isWithdraws = config.valueSource() == ValueSource.WITHDRAWS;
-		boolean showValue = config.showStackValue() && (isWithdraws || value >= config.minValue());
-		// The per-slot tint handles every colour mode except Density field, which is drawn as one
-		// whole-bank pass by HeatFieldOverlay instead.
-		boolean tint = config.thermalTint() && config.colourMode() != ColourMode.DENSITY_FIELD;
+		boolean valueIsCount = config.valueSource() == ValueSource.WITHDRAWS;
+		boolean showValue = config.showStackValue() && (valueIsCount || value >= config.minValue());
+		boolean tint = slotTintEnabled();
 		TopEffect effect = model.isTop(value, itemId) ? config.topEffect() : TopEffect.NONE;
 		if (!showValue && !tint && effect == TopEffect.NONE)
 		{
@@ -86,38 +68,64 @@ class HotStacksOverlay extends WidgetItemOverlay
 
 		double rank = model.rankFraction(value);
 		Color color = colourFor(rank);
-
-		// 1. Heat map tint sits under everything. Scaled by rank so the whole view gets a gradient
-		//    of blooms (wealth-fraction would collapse all but the top few to nothing here).
 		if (tint)
 		{
-			double tintIntensity = config.scaleHeatmapByValue() ? intensityFor(rank) : 1.0;
-			drawTint(graphics, bounds, color, tintIntensity);
+			drawTint(graphics, bounds, color, tintIntensity(rank));
 		}
-
-		// 2. Value label.
 		if (showValue)
 		{
-			String text = isWithdraws ? Long.toString(value) : QuantityFormatter.quantityToStackSize(value);
-			graphics.setFont(fontFor(rank));
-			FontMetrics metrics = graphics.getFontMetrics();
-			int x = bounds.x + (bounds.width - metrics.stringWidth(text)) / 2;
-			int y = bounds.y + bounds.height - metrics.getDescent();
+			drawValueLabel(graphics, bounds, formatValue(value, valueIsCount), rank, color);
+		}
+		drawEffect(graphics, bounds, effect, effectIntensity(value));
+	}
 
-			if (config.coverText())
-			{
-				// Overwrite anything else drawn at the bottom of the slot (item charges, etc.).
-				int top = y - metrics.getAscent();
-				graphics.setColor(config.textBackgroundColor());
-				graphics.fillRect(bounds.x, top, bounds.width, metrics.getAscent() + metrics.getDescent());
-			}
+	/** Excludes Density field, which HeatFieldOverlay draws as one whole-bank pass instead. */
+	private boolean slotTintEnabled()
+	{
+		return config.thermalTint() && config.colourMode() != ColourMode.DENSITY_FIELD;
+	}
 
-			OverlayUtil.renderTextLocation(graphics, new Point(x, y), text, color);
+	/** Scaled by rank, not wealth share: wealth share would fade all but the top few stacks to nothing. */
+	private double tintIntensity(double rank)
+	{
+		return config.scaleHeatmapByValue() ? intensityFor(rank) : 1.0;
+	}
+
+	/** Scaled by wealth share: the effect only marks the top few stacks, where shares differ enough to show. */
+	private double effectIntensity(long value)
+	{
+		return config.scaleEffectByValue() ? intensityFor(normalisedWealthShare(value)) : 1.0;
+	}
+
+	private static String formatValue(long value, boolean valueIsCount)
+	{
+		return valueIsCount ? Long.toString(value) : QuantityFormatter.quantityToStackSize(value);
+	}
+
+	private void drawValueLabel(Graphics2D graphics, Rectangle bounds, String text, double rank, Color color)
+	{
+		graphics.setFont(fontFor(rank));
+		FontMetrics metrics = graphics.getFontMetrics();
+		int x = bounds.x + (bounds.width - metrics.stringWidth(text)) / 2;
+		int y = bounds.y + bounds.height - metrics.getDescent();
+
+		if (config.coverText())
+		{
+			drawTextBackground(graphics, bounds, metrics, y);
 		}
 
-		// 3. Effect sits on top so it drifts around/in front of the item. Scaled by the stack's
-		//    share of whole-bank wealth (it only marks the top few, where fractions vary enough).
-		double intensity = config.scaleEffectByValue() ? intensityFor(wealthNorm(value)) : 1.0;
+		OverlayUtil.renderTextLocation(graphics, new Point(x, y), text, color);
+	}
+
+	private void drawTextBackground(Graphics2D graphics, Rectangle bounds, FontMetrics metrics, int baseline)
+	{
+		int top = baseline - metrics.getAscent();
+		graphics.setColor(config.textBackgroundColor());
+		graphics.fillRect(bounds.x, top, bounds.width, metrics.getAscent() + metrics.getDescent());
+	}
+
+	private void drawEffect(Graphics2D graphics, Rectangle bounds, TopEffect effect, double intensity)
+	{
 		if (effect == TopEffect.EMBERS)
 		{
 			drawEmbers(graphics, bounds, false, intensity);
@@ -132,25 +140,19 @@ class HotStacksOverlay extends WidgetItemOverlay
 		}
 	}
 
-	/** Maps a normalised position [0, 1] to an intensity multiplier [floor, ceil]. */
 	private double intensityFor(double norm)
 	{
 		double n = norm < 0 ? 0 : Math.min(1.0, norm);
 		return INTENSITY_FLOOR + (INTENSITY_CEIL - INTENSITY_FLOOR) * n;
 	}
 
-	/** A stack's share of the current view's total value, normalised so {@link #WEALTH_REF} maps to full. */
-	private double wealthNorm(long value)
+	private double normalisedWealthShare(long value)
 	{
 		long total = model.viewTotal();
-		double frac = total > 0 ? (double) value / total : 0;
-		return Math.min(1.0, frac / WEALTH_REF);
+		double share = total > 0 ? (double) value / total : 0;
+		return Math.min(1.0, share / FULL_INTENSITY_WEALTH_SHARE);
 	}
 
-	/**
-	 * Soft radial wash of the slot in its heat colour. {@code intensity} scales both its alpha and
-	 * its radius, so a value-scaled heat map shows bigger, stronger blooms on your dearest stacks.
-	 */
 	private void drawTint(Graphics2D graphics, Rectangle bounds, Color color, double intensity)
 	{
 		int alpha = clampAlpha((int) (TINT_BASE_ALPHA * intensity));
@@ -178,7 +180,7 @@ class HotStacksOverlay extends WidgetItemOverlay
 			case SINGLE:
 				return Color.WHITE;
 			case GRADIENT:
-			case DENSITY_FIELD:   // label follows the configured ramp; the field itself is drawn separately
+			case DENSITY_FIELD:
 				return HeatColor.blend(rank, config.lowColor(), config.highColor());
 			case HEAT_RAMP:
 			default:
@@ -203,39 +205,34 @@ class HotStacksOverlay extends WidgetItemOverlay
 		return FontManager.getRunescapeSmallFont();
 	}
 
-	/** A sparkle: relative position within the slot (0..1), animation phase, and max radius. */
+	private static final int SPARKLE_X_FRACTION = 0;
+	private static final int SPARKLE_Y_FRACTION = 1;
+	private static final int SPARKLE_PHASE = 2;
+	private static final int SPARKLE_MAX_RADIUS = 3;
 	private static final double[][] SPARKLES = {
-		// {fx, fy, phase, maxRadius}
 		{0.84, 0.15, 0.0, 7.5},
 		{0.16, 0.24, 2.1, 6.0},
 		{0.68, 0.78, 4.2, 5.0},
 		{0.34, 0.62, 5.5, 4.5},
 	};
 
-	/**
-	 * A few four-point stars around the most valuable stacks, each twinkling on and off out of
-	 * phase with the others. Each star is a bright core, a soft body, and long thin cross-flares
-	 * for the classic sparkle glint. Animated off wall-clock time so it plays every frame.
-	 */
 	private void drawSparkles(Graphics2D graphics, Rectangle bounds, double intensity)
 	{
 		Object aa = graphics.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
 		double scale = effectScale();
-		// Time is NOT scaled by intensity so a changing intensity never jumps the animation.
-		double time = System.currentTimeMillis() / 240.0;
+		double time = animationTime(240.0);
 		for (double[] s : SPARKLES)
 		{
-			// max(0, sin) so each star fully vanishes for part of its cycle — a twinkle, not a pulse.
-			double twinkle = Math.sin(time + s[2]);
+			double twinkle = Math.sin(time + s[SPARKLE_PHASE]);
 			if (twinkle <= 0.03)
 			{
 				continue;
 			}
-			double cx = bounds.x + s[0] * bounds.width;
-			double cy = bounds.y + s[1] * bounds.height;
-			drawStar(graphics, cx, cy, s[3] * scale * intensity * (0.45 + 0.55 * twinkle), twinkle, intensity);
+			double cx = bounds.x + s[SPARKLE_X_FRACTION] * bounds.width;
+			double cy = bounds.y + s[SPARKLE_Y_FRACTION] * bounds.height;
+			drawStar(graphics, cx, cy, s[SPARKLE_MAX_RADIUS] * scale * intensity * (0.45 + 0.55 * twinkle), twinkle, intensity);
 		}
 
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
@@ -244,13 +241,26 @@ class HotStacksOverlay extends WidgetItemOverlay
 
 	private void drawStar(Graphics2D graphics, double cx, double cy, double outer, double twinkle, double intensity)
 	{
-		int alpha = clampAlpha((int) (255 * twinkle * intensity));   // dearer stacks glint brighter
-		// Long thin cross-flares (the glint), then the fuller star body, then a bright core.
-		fillStar(graphics, cx, cy, outer * 2.0, outer * 0.08, new Color(255, 255, 255, clampAlpha((int) (200 * twinkle * intensity))));
+		int alpha = clampAlpha((int) (255 * twinkle * intensity));
+		int flareAlpha = clampAlpha((int) (200 * twinkle * intensity));
+		drawGlintFlares(graphics, cx, cy, outer, flareAlpha);
+		drawStarBody(graphics, cx, cy, outer, alpha);
+		drawStarCore(graphics, cx, cy, outer, alpha);
+	}
+
+	private void drawGlintFlares(Graphics2D graphics, double cx, double cy, double outer, int alpha)
+	{
+		fillStar(graphics, cx, cy, outer * 2.0, outer * 0.08, new Color(255, 255, 255, alpha));
+	}
+
+	private void drawStarBody(Graphics2D graphics, double cx, double cy, double outer, int alpha)
+	{
 		fillStar(graphics, cx, cy, outer, outer * 0.36, new Color(255, 250, 205, alpha));
-		double core = Math.max(1.0, outer * 0.28);
-		graphics.setColor(new Color(255, 255, 255, alpha));
-		graphics.fill(new java.awt.geom.Ellipse2D.Double(cx - core, cy - core, core * 2, core * 2));
+	}
+
+	private void drawStarCore(Graphics2D graphics, double cx, double cy, double outer, int alpha)
+	{
+		fillDot(graphics, cx, cy, Math.max(1.0, outer * 0.28), new Color(255, 255, 255, alpha));
 	}
 
 	private void fillStar(Graphics2D graphics, double cx, double cy, double outer, double inner, Color color)
@@ -282,36 +292,50 @@ class HotStacksOverlay extends WidgetItemOverlay
 	}
 
 	private static final int EMBER_COUNT = 6;
-	/** Golden-ratio step spreads each ember's cycle offset evenly without any clumping. */
-	private static final double GOLDEN = 0.6180339887;
+	/** Stepping each ember's cycle offset by this spreads them evenly, with no clumping. */
+	private static final double GOLDEN_RATIO_CONJUGATE = 0.6180339887;
 
-	/**
-	 * Glowing embers marking the most valuable stacks — a nod to the "Hot Stacks" name. Each ember
-	 * runs a continuous, looping life cycle, cools from yellow to red, and fades as it travels.
-	 * When {@code radial} they spit outward from the centre (as if the item were a hot coal);
-	 * otherwise they rise from the bottom (as if from a fire beneath it).
-	 *
-	 * <p>Positions are a pure function of time and a per-slot seed (no stored state), so it animates
-	 * smoothly and each item differs. Every cycle is a fresh trajectory — angle/distance/drift (or
-	 * spawn/sway/height) are hashed from the ember's current cycle number, so an ember never
-	 * retraces the same path twice while staying deterministic and stateless.</p>
-	 */
 	private void drawEmbers(Graphics2D graphics, Rectangle bounds, boolean radial, double intensity)
 	{
 		Object aa = graphics.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
 		double scale = effectScale();
-		// Time is NOT scaled by intensity: a changing intensity (on a recompute) must not jump the
-		// phase and restart the animation. Intensity shows through brightness and size instead.
-		double t = System.currentTimeMillis() / 1000.0;
+		double seconds = animationTime(1000.0);
 		double sizeMul = (0.7 + scale) * intensity;
-		double seed = bounds.x * 0.137 + bounds.y * 0.071;
-		double maxDist = Math.max(bounds.width, bounds.height) * 0.72;
-		double baseY = bounds.y + bounds.height;
-		double rise = bounds.height * 1.25;
+		double slotSeed = bounds.x * 0.137 + bounds.y * 0.071;
 
-		// A faint glow in the middle of the slot backs the embers.
+		drawEmberGlow(graphics, bounds, intensity);
+
+		for (int i = 0; i < EMBER_COUNT; i++)
+		{
+			double offset = frac(slotSeed + i * GOLDEN_RATIO_CONJUGATE);
+			double cycleSeconds = 1.5 + (i % 4) * 0.35;
+			double cyclePosition = seconds / cycleSeconds + offset;
+			double cycleNumber = Math.floor(cyclePosition);
+			double progress = cyclePosition - cycleNumber;
+
+			double h1 = pseudoRandomFraction(slotSeed + i * 12.9 + cycleNumber * 78.2);
+			double h2 = pseudoRandomFraction(slotSeed + i * 39.3 + cycleNumber * 11.1);
+			double h3 = pseudoRandomFraction(slotSeed + i * 63.7 + cycleNumber * 27.6);
+			Point2D.Double position = radial
+				? radialEmberPosition(bounds, progress, h1, h2, h3)
+				: risingEmberPosition(bounds, progress, h1, h2, h3);
+
+			double alpha = emberAlpha(progress, intensity);
+			if (alpha <= 0.02)
+			{
+				continue;
+			}
+			drawEmber(graphics, position, progress, alpha, sizeMul);
+		}
+
+		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+			aa == null ? RenderingHints.VALUE_ANTIALIAS_DEFAULT : aa);
+	}
+
+	private void drawEmberGlow(Graphics2D graphics, Rectangle bounds, double intensity)
+	{
 		double gcx = bounds.x + bounds.width / 2.0;
 		double gcy = bounds.y + bounds.height / 2.0;
 		double glowRadius = bounds.width * 0.32;
@@ -322,62 +346,57 @@ class HotStacksOverlay extends WidgetItemOverlay
 			new float[]{0f, 1f},
 			new Color[]{new Color(255, 120, 30, glowAlpha), new Color(255, 120, 30, 0)}));
 		graphics.fill(new java.awt.geom.Ellipse2D.Double(gcx - glowRadius, gcy - glowRadius, glowRadius * 2, glowRadius * 2));
-
-		for (int i = 0; i < EMBER_COUNT; i++)
-		{
-			double offset = frac(seed + i * GOLDEN);
-			double life = 1.5 + (i % 4) * 0.35;                 // seconds per cycle, varied per ember
-			double cyclePos = t / life + offset;
-			double cycle = Math.floor(cyclePos);                // which cycle this is — reseeds each loop
-			double p = cyclePos - cycle;                        // 0 at the start, 1 at the end of travel
-
-			// Fresh pseudo-random traits per cycle, so no cycle repeats the previous one.
-			double h1 = hash(seed + i * 12.9 + cycle * 78.2);
-			double h2 = hash(seed + i * 39.3 + cycle * 11.1);
-			double h3 = hash(seed + i * 63.7 + cycle * 27.6);
-
-			double x;
-			double y;
-			if (radial)
-			{
-				double angle = h1 * Math.PI * 2.0;              // a fresh outward direction each cycle
-				double dist = p * maxDist * (0.7 + 0.5 * h2);   // vary how far each spark flies
-				double curve = Math.sin(p * Math.PI * (1.0 + h3)) * bounds.width * 0.06;
-				x = gcx + Math.cos(angle) * dist - Math.sin(angle) * curve;
-				y = gcy + Math.sin(angle) * dist + Math.cos(angle) * curve;
-			}
-			else
-			{
-				double spawnX = bounds.x + bounds.width * (0.12 + 0.76 * h1);
-				double sway = Math.sin(p * (1.5 + 2.5 * h3) * Math.PI + h1 * Math.PI * 2) * bounds.width * (0.07 + 0.13 * h2);
-				x = spawnX + sway;
-				y = baseY - p * rise * (0.8 + 0.4 * h2);        // vary how high each rise reaches
-			}
-
-			// Quick fade-in at the start, fade out as it travels; dampened, and brighter for dearer stacks.
-			double alpha = Math.min(1.0, p * 6.0) * (1.0 - p) * 0.55 * intensity;
-			if (alpha <= 0.02)
-			{
-				continue;
-			}
-			double r = (0.7 + 0.9 * (1.0 - p)) * sizeMul;       // shrink slightly as it travels
-
-			int g = clampChannel((int) (215 - 175 * p));        // yellow (hot) → red (cool)
-			int b = clampChannel((int) (95 - 85 * p));
-			int a = clampAlpha((int) (255 * alpha));
-			fillDot(graphics, x, y, r * 1.7, new Color(255, g, b, clampAlpha((int) (a * 0.22))));
-			fillDot(graphics, x, y, r, new Color(255, g, b, a));
-			fillDot(graphics, x, y, r * 0.45, new Color(255, 245, 205, a));
-		}
-
-		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-			aa == null ? RenderingHints.VALUE_ANTIALIAS_DEFAULT : aa);
 	}
 
-	/** Deterministic pseudo-random value in [0, 1) from any input — the classic sine hash. */
-	private static double hash(double n)
+	private static Point2D.Double radialEmberPosition(Rectangle bounds, double progress, double h1, double h2, double h3)
 	{
-		return frac(Math.sin(n) * 43758.5453123);
+		double centreX = bounds.x + bounds.width / 2.0;
+		double centreY = bounds.y + bounds.height / 2.0;
+		double maxDistance = Math.max(bounds.width, bounds.height) * 0.72;
+		double outwardAngle = h1 * Math.PI * 2.0;
+		double distance = progress * maxDistance * (0.7 + 0.5 * h2);
+		double curve = Math.sin(progress * Math.PI * (1.0 + h3)) * bounds.width * 0.06;
+		return new Point2D.Double(
+			centreX + Math.cos(outwardAngle) * distance - Math.sin(outwardAngle) * curve,
+			centreY + Math.sin(outwardAngle) * distance + Math.cos(outwardAngle) * curve);
+	}
+
+	private static Point2D.Double risingEmberPosition(Rectangle bounds, double progress, double h1, double h2, double h3)
+	{
+		double spawnX = bounds.x + bounds.width * (0.12 + 0.76 * h1);
+		double sway = Math.sin(progress * (1.5 + 2.5 * h3) * Math.PI + h1 * Math.PI * 2) * bounds.width * (0.07 + 0.13 * h2);
+		double bottom = bounds.y + bounds.height;
+		double maxRise = bounds.height * 1.25;
+		return new Point2D.Double(spawnX + sway, bottom - progress * maxRise * (0.8 + 0.4 * h2));
+	}
+
+	private static double emberAlpha(double progress, double intensity)
+	{
+		double fadeIn = Math.min(1.0, progress * 6.0);
+		double fadeOut = 1.0 - progress;
+		return fadeIn * fadeOut * 0.55 * intensity;
+	}
+
+	private void drawEmber(Graphics2D graphics, Point2D.Double position, double progress, double alpha, double sizeMul)
+	{
+		double shrinkingRadius = (0.7 + 0.9 * (1.0 - progress)) * sizeMul;
+		int coolingGreen = clampChannel((int) (215 - 175 * progress));
+		int coolingBlue = clampChannel((int) (95 - 85 * progress));
+		int a = clampAlpha((int) (255 * alpha));
+		fillDot(graphics, position.x, position.y, shrinkingRadius * 1.7, new Color(255, coolingGreen, coolingBlue, clampAlpha((int) (a * 0.22))));
+		fillDot(graphics, position.x, position.y, shrinkingRadius, new Color(255, coolingGreen, coolingBlue, a));
+		fillDot(graphics, position.x, position.y, shrinkingRadius * 0.45, new Color(255, 245, 205, a));
+	}
+
+	/** Not scaled by intensity: an intensity change would then jump the animation's phase. */
+	private static double animationTime(double millisPerUnit)
+	{
+		return System.currentTimeMillis() / millisPerUnit;
+	}
+
+	private static double pseudoRandomFraction(double seed)
+	{
+		return frac(Math.sin(seed) * 43758.5453123);
 	}
 
 	private void fillDot(Graphics2D graphics, double cx, double cy, double radius, Color color)
@@ -386,7 +405,7 @@ class HotStacksOverlay extends WidgetItemOverlay
 		graphics.fill(new java.awt.geom.Ellipse2D.Double(cx - radius, cy - radius, radius * 2, radius * 2));
 	}
 
-	/** The configured effect size, clamped to [0, 3] in case an out-of-range value was stored. */
+	/** {@code @Range} only limits the config UI, so a stored value can still be out of range. */
 	private double effectScale()
 	{
 		double s = config.sparkleScale();

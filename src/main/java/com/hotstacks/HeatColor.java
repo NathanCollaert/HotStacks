@@ -2,18 +2,9 @@ package com.hotstacks;
 
 import java.awt.Color;
 
-/**
- * Turns a rank fraction (0 = cheapest stack in view, 1 = dearest) into a colour.
- *
- * <p>Because items are positioned by rank rather than raw value, the palette is always spread
- * evenly across whatever is in view. Three palettes are offered (see {@link ColourMode}): a
- * continuous multi-stop spectrum, a small number of solid tiers cut from that spectrum, and a
- * plain two-colour blend.</p>
- */
 final class HeatColor
 {
-	/** Cold → hot spectrum: blue, green, yellow, orange, red (evenly spaced). */
-	private static final Color[] RAMP = {
+	private static final Color[] COLD_TO_HOT = {
 		new Color(0x2E, 0x6F, 0xF2),
 		new Color(0x2E, 0xCC, 0x40),
 		new Color(0xFF, 0xDC, 0x00),
@@ -25,23 +16,20 @@ final class HeatColor
 	{
 	}
 
-	/** Continuous spectrum colour for a rank fraction in {@code [0, 1]}. */
-	static Color ramp(double f)
+	static Color ramp(double rankFraction)
 	{
-		f = clamp01(f);
-		double scaled = f * (RAMP.length - 1);
+		double scaled = clamp01(rankFraction) * (COLD_TO_HOT.length - 1);
 		int i = (int) Math.floor(scaled);
-		if (i >= RAMP.length - 1)
+		if (i >= COLD_TO_HOT.length - 1)
 		{
-			return RAMP[RAMP.length - 1];
+			return COLD_TO_HOT[COLD_TO_HOT.length - 1];
 		}
-		return lerp(RAMP[i], RAMP[i + 1], scaled - i);
+		return lerp(COLD_TO_HOT[i], COLD_TO_HOT[i + 1], scaled - i);
 	}
 
-	/** Blend between two configured colours (incl. alpha) for a rank fraction in {@code [0, 1]}. */
-	static Color blend(double f, Color low, Color high)
+	static Color blend(double rankFraction, Color low, Color high)
 	{
-		return lerp(low, high, clamp01(f));
+		return lerp(low, high, clamp01(rankFraction));
 	}
 
 	private static Color lerp(Color a, Color b, double f)

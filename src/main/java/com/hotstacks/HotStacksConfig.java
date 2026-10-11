@@ -41,8 +41,6 @@ public interface HotStacksConfig extends Config
 	)
 	String SECTION_EFFECT = "effect";
 
-	// ---- General --------------------------------------------------------------
-
 	@ConfigItem(
 		keyName = "valueSource",
 		name = "Value source",
@@ -54,8 +52,6 @@ public interface HotStacksConfig extends Config
 	{
 		return ValueSource.GE;
 	}
-
-	// ---- Stack value ---------------------------------------------------------
 
 	@ConfigItem(
 		keyName = "showStackValue",
@@ -103,7 +99,6 @@ public interface HotStacksConfig extends Config
 	)
 	default Color textBackgroundColor()
 	{
-		// ARGB 0xC8000000 -> black at ~78% opacity.
 		return new Color(0x00, 0x00, 0x00, 0xC8);
 	}
 
@@ -118,8 +113,6 @@ public interface HotStacksConfig extends Config
 	{
 		return false;
 	}
-
-	// ---- Heat map ------------------------------------------------------------
 
 	@ConfigItem(
 		keyName = "thermalTint",
@@ -182,8 +175,6 @@ public interface HotStacksConfig extends Config
 	{
 		return new Color(0xFF, 0xC5, 0x3D, 0xFF);
 	}
-
-	// ---- Effect --------------------------------------------------------------
 
 	@ConfigItem(
 		keyName = "topEffect",

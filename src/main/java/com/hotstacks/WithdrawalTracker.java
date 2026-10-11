@@ -12,28 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ItemManager;
 
-/**
- * Counts how many times each item has been withdrawn from the bank, for the {@link
- * ValueSource#WITHDRAWS} value source. A withdrawal is a single Withdraw-N/X/All click, counted
- * once regardless of the quantity it moved — this tracks how often you reach for an item, not how
- * much of it passes through.
- *
- * <p>Counts are lifetime and kept per game account (RuneLite's per-RSProfile config storage), so an
- * alt's habits don't bleed into another's. There is no reset; the map only grows.</p>
- *
- * <p>A click and the bank actually losing the item are two different moments — the server takes a
- * tick or two to process the withdrawal, but the click fires immediately. If {@link #count} picked
- * up a fresh increment straight away, the bank's forced per-tick re-rank (see {@code
- * BankValueModel#invalidate()}) would briefly rank the slot by its new count while the slot still
- * shows its pre-withdrawal quantity — a one-tick flash. So a new count is held in {@link #pending}
- * (and persisted right away, so a click is never lost) and only becomes visible to {@link #count}
- * once {@link #commitPending()} is called — which {@code BankValueModel} does exactly when the
- * bank's own displayed contents have actually changed, keeping the two in lockstep.</p>
- *
- * <p>The map is stored as a JSON string, (de)serialized here: ConfigManager's typed get/set only
- * route {@code Set}s through Gson, so a {@code Map} would be written with {@code toString()} and read
- * back as a raw String.</p>
- */
+/** Counts withdraw clicks, not quantities moved: it measures how often you reach for an item. */
 @Slf4j
 @Singleton
 class WithdrawalTracker
@@ -47,11 +26,9 @@ class WithdrawalTracker
 	private final ItemManager itemManager;
 	private final Gson gson;
 
-	/** The persisted, up-to-date total — updated (and saved) the instant a withdrawal is recorded. */
-	private Map<Integer, Integer> counts = new HashMap<>();
-	/** What {@link #count} reads; only caught up to {@link #counts} by {@link #commitPending()}. */
-	private Map<Integer, Integer> visible = new HashMap<>();
-	private boolean dirty;
+	private Map<Integer, Integer> recordedCounts = new HashMap<>();
+	private Map<Integer, Integer> visibleCounts = new HashMap<>();
+	private boolean hasUncommittedRecords;
 
 	@Inject
 	WithdrawalTracker(ConfigManager configManager, ItemManager itemManager, Gson gson)
@@ -61,49 +38,54 @@ class WithdrawalTracker
 		this.gson = gson;
 	}
 
-	/** Loads this account's counts, replacing whatever was held for the previous one. */
 	void load()
 	{
-		counts = decode(gson, configManager.getRSProfileConfiguration(HotStacksConfig.GROUP, KEY));
-		visible = new HashMap<>(counts);
-		dirty = false;
+		recordedCounts = decode(gson, configManager.getRSProfileConfiguration(HotStacksConfig.GROUP, KEY));
+		visibleCounts = new HashMap<>(recordedCounts);
+		hasUncommittedRecords = false;
 	}
 
-	/** Records one withdrawal of {@code itemId} and persists immediately; not yet visible to {@link #count}. */
+	/** Persists immediately, but stays invisible to {@link #count} until {@link #commitPending()}. */
 	void record(int itemId)
 	{
 		int id = itemManager.canonicalize(itemId);
-		counts.merge(id, 1, Integer::sum);
-		dirty = true;
-		configManager.setRSProfileConfiguration(HotStacksConfig.GROUP, KEY, encode(gson, counts));
+		recordedCounts.merge(id, 1, Integer::sum);
+		hasUncommittedRecords = true;
+		configManager.setRSProfileConfiguration(HotStacksConfig.GROUP, KEY, encode(gson, recordedCounts));
 	}
 
-	/** Makes any counts recorded since the last commit visible to {@link #count}. */
+	/**
+	 * Call only once the bank's shown contents have changed. A withdraw click lands a tick or two
+	 * before the bank loses the item, and revealing its count sooner would rank the slot by the new
+	 * count while it still shows the old quantity.
+	 */
 	void commitPending()
 	{
-		if (dirty)
+		if (hasUncommittedRecords)
 		{
-			visible = new HashMap<>(counts);
-			dirty = false;
+			visibleCounts = new HashMap<>(recordedCounts);
+			hasUncommittedRecords = false;
 		}
 	}
 
-	/** How many times {@code itemId} (or its noted/placeholder variant) has been withdrawn. */
 	int count(int itemId)
 	{
-		Integer c = visible.get(itemManager.canonicalize(itemId));
+		Integer c = visibleCounts.get(itemManager.canonicalize(itemId));
 		return c == null ? 0 : c;
 	}
 
+	/**
+	 * ConfigManager only routes {@code Set}s through Gson: a {@code Map} would be stored via
+	 * {@code toString()} and read back as a raw String, so the map is encoded here.
+	 */
 	static String encode(Gson gson, Map<Integer, Integer> counts)
 	{
 		return gson.toJson(counts, MAP_TYPE);
 	}
 
 	/**
-	 * Parses stored counts into a fresh mutable map. Earlier builds stored the map's {@code
-	 * toString()} ({@code {1234=5, 995=2}}), which Gson's lenient parsing also reads, so those counts
-	 * carry over. Anything unreadable starts the account fresh rather than failing the load.
+	 * Returns a fresh mutable map, empty when nothing readable is stored. Gson's lenient parsing also
+	 * reads the legacy {@code Map.toString()} format ({@code {1234=5, 995=2}}).
 	 */
 	static Map<Integer, Integer> decode(Gson gson, String stored)
 	{

@@ -22,6 +22,8 @@ import net.runelite.client.ui.overlay.OverlayManager;
 )
 public class HotStacksPlugin extends Plugin
 {
+	private static final String WITHDRAW_OPTION_PREFIX = "Withdraw";
+
 	@Inject
 	private OverlayManager overlayManager;
 	@Inject
@@ -57,24 +59,19 @@ public class HotStacksPlugin extends Plugin
 	@Subscribe
 	public void onBeforeRender(BeforeRender event)
 	{
-		// Re-rank against the slots shown this frame, right before the overlay draws. Keeping this
-		// in lockstep with rendering is what avoids the one-frame flash when the shown set changes.
 		model.syncToView();
 	}
 
 	@Subscribe
 	public void onGameTick(GameTick event)
 	{
-		// Force a rebuild each tick so price changes are picked up even when the shown items don't
-		// change; syncToView() does the actual work on the next frame.
+		// Prices drift even while the shown items stay the same.
 		model.invalidate();
 	}
 
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		// Changing the value source (or any setting) alters the values without changing the shown
-		// items, so force a rebuild rather than waiting for the signature to change.
 		if (HotStacksConfig.GROUP.equals(event.getGroup()))
 		{
 			model.invalidate();
@@ -84,28 +81,27 @@ public class HotStacksPlugin extends Plugin
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
-		// A withdraw click on a bank slot — guarded by interface so GE collects, deposit boxes and
-		// non-bank "Withdraw" options elsewhere don't get counted. Text-matched rather than by
-		// MenuAction since withdraw quantity/mode variants (1/5/10/X/All) share no single action id.
-		if (!event.getMenuOption().startsWith("Withdraw"))
+		if (isWithdrawOption(event) && clickedInBank(event))
 		{
-			return;
+			withdrawalTracker.record(event.getItemId());
 		}
-		int group = WidgetUtil.componentToInterface(event.getWidgetId());
-		if (group != InterfaceID.BANKMAIN && group != InterfaceID.SHARED_BANK)
-		{
-			return;
-		}
-		// Recorded immediately (so a click is never lost), but not yet visible to ranking — the model
-		// only reveals it once the bank's own contents actually reflect the withdrawal, avoiding a
-		// one-tick flash where a slot ranks by its new count while still showing its old quantity.
-		withdrawalTracker.record(event.getItemId());
 	}
 
 	@Subscribe
 	public void onRuneScapeProfileChanged(RuneScapeProfileChanged event)
 	{
-		// Withdrawal counts are per-account; reload so an alt's habits don't bleed into another's.
 		withdrawalTracker.load();
+	}
+
+	/** Matched by text because the withdraw variants (1/5/10/X/All) share no single MenuAction. */
+	private static boolean isWithdrawOption(MenuOptionClicked event)
+	{
+		return event.getMenuOption().startsWith(WITHDRAW_OPTION_PREFIX);
+	}
+
+	private static boolean clickedInBank(MenuOptionClicked event)
+	{
+		int group = WidgetUtil.componentToInterface(event.getWidgetId());
+		return group == InterfaceID.BANKMAIN || group == InterfaceID.SHARED_BANK;
 	}
 }

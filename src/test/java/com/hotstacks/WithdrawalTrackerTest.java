@@ -40,7 +40,6 @@ public class WithdrawalTrackerTest
 	@Test
 	public void readsLegacyToStringFormat()
 	{
-		// What earlier builds actually stored: ConfigManager fell back to Map.toString().
 		Map<Integer, Integer> counts = sample();
 		assertEquals(counts, WithdrawalTracker.decode(gson, counts.toString()));
 		assertEquals(new HashMap<>(), WithdrawalTracker.decode(gson, new HashMap<>().toString()));
